@@ -1,57 +1,87 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 model Agent {
   id          String   @id @default(cuid())
-  name        String
+  name        String   @unique
   role        String
   goals       Json
   permissions Json
   memory      Json
   escalation  String
 
-  createdAt DateTime @default(now())
+  memories    AgentMemory[]
+  executions  WorkflowExecution[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Workflow {
   id          String   @id @default(cuid())
-  name        String
+  name        String   @unique
   trigger     String
+  steps       Json
   automation  String
   owner       String
 
-  steps WorkflowStep[]
+  executions  WorkflowExecution[]
 
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
-model WorkflowStep {
-  id         String   @id @default(cuid())
-  workflowId String
+model WorkflowExecution {
+  id           String   @id @default(cuid())
 
-  workflow Workflow
-    @relation(
-      fields: [workflowId],
-      references: [id]
-    )
+  workflowId   String
+  workflow     Workflow @relation(fields: [workflowId], references: [id])
 
-  order Int
-  label String
+  agentId      String?
+  agent        Agent? @relation(fields: [agentId], references: [id])
 
-  createdAt DateTime @default(now())
+  input        Json
+  output       Json?
+
+  status       String
+
+  startedAt    DateTime @default(now())
+  completedAt  DateTime?
+
+  createdAt    DateTime @default(now())
 }
 
-model MemoryRecord {
-  id        String   @id @default(cuid())
-  namespace String
-  key       String
-  value     Json
+model AgentMemory {
+  id          String   @id @default(cuid())
 
-  createdAt DateTime @default(now())
+  agentId     String
+  agent       Agent @relation(fields: [agentId], references: [id])
+
+  namespace   String
+  memoryKey   String
+
+  value       Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Event {
+  id          String   @id @default(cuid())
+
+  type        String
+  payload     Json
+
+  source      String?
+  correlation String?
+
+  createdAt   DateTime @default(now())
 }
