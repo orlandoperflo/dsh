@@ -27,7 +27,7 @@ You can verify the deployed environment without exposing the secret by visiting:
 https://your-vercel-domain.vercel.app/api/analyze
 ```
 
-A working Vercel setup returns JSON with `openai.configured: true` and the environment variable name being used. Then run orchestration from the workspace; `Mode: openai` means the context was sent to OpenAI and a response was received.
+A working Vercel setup returns JSON with `openai.configured: true` and the environment variable name being used. Then run orchestration from the workspace; `Mode: openai` plus the success message `OpenAI generation received successfully` means the context was sent to OpenAI and the generated JSON was received and validated. If you see a fallback message, the dashboard is deterministic template output rather than a live OpenAI generation.
 
 The API also checks `OPEN_AI_API_KEY` as a compatibility alias, but `OPENAI_API_KEY` is preferred.
 
