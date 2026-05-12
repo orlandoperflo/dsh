@@ -29,9 +29,9 @@ export function generateRepository(analysis: AnalysisResult) {
       typecheck: "tsc --noEmit"
     },
     dependencies: {
-      next: "15.3.8",
-      react: "19.0.0",
-      "react-dom": "19.0.0",
+      next: "latest",
+      react: "latest",
+      "react-dom": "latest",
       openai: "latest",
       zod: "latest"
     },
