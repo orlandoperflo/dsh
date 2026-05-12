@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  name        String
+  role        String
+  goals       Json
+  permissions Json
+  memory      Json
+  escalation  String
+
+  createdAt DateTime @default(now())
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String
+  trigger     String
+  automation  String
+  owner       String
+
+  steps WorkflowStep[]
+
+  createdAt DateTime @default(now())
+}
+
+model WorkflowStep {
+  id         String   @id @default(cuid())
+  workflowId String
+
+  workflow Workflow
+    @relation(
+      fields: [workflowId],
+      references: [id]
+    )
+
+  order Int
+  label String
+
+  createdAt DateTime @default(now())
+}
+
+model MemoryRecord {
+  id        String   @id @default(cuid())
+  namespace String
+  key       String
+  value     Json
+
+  createdAt DateTime @default(now())
+}
