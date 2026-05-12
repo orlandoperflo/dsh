@@ -15,4 +15,4 @@ Create `.env.local` from `.env.example` and set `OPENAI_API_KEY`. If no key is p
 
 ## Vercel deployment
 
-This is a Next.js App Router application using serverless API routes. The app pins Next.js to a patched 15.3.x release to satisfy Vercel security checks for CVE-2025-66478. Import the repository into Vercel, add `OPENAI_API_KEY`, and deploy with the default Next.js preset. After deployment, verify the homepage loads and the repository generator can run in deterministic fallback mode without an OpenAI key.
+This is a Next.js App Router application using serverless API routes. Import the repository into Vercel, add `OPENAI_API_KEY`, and deploy with the default Next.js preset.
