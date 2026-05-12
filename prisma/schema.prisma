@@ -1,0 +1,87 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Agent {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  role        String
+  goals       Json
+  permissions Json
+  memory      Json
+  escalation  String
+
+  memories    AgentMemory[]
+  executions  WorkflowExecution[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  trigger     String
+  steps       Json
+  automation  String
+  owner       String
+
+  executions  WorkflowExecution[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model WorkflowExecution {
+  id           String   @id @default(cuid())
+
+  workflowId   String
+  workflow     Workflow @relation(fields: [workflowId], references: [id])
+
+  agentId      String?
+  agent        Agent? @relation(fields: [agentId], references: [id])
+
+  input        Json
+  output       Json?
+
+  status       String
+
+  startedAt    DateTime @default(now())
+  completedAt  DateTime?
+
+  createdAt    DateTime @default(now())
+}
+
+model AgentMemory {
+  id          String   @id @default(cuid())
+
+  agentId     String
+  agent       Agent @relation(fields: [agentId], references: [id])
+
+  namespace   String
+  memoryKey   String
+
+  value       Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Event {
+  id          String   @id @default(cuid())
+
+  type        String
+  payload     Json
+
+  source      String?
+  correlation String?
+
+  createdAt   DateTime @default(now())
+}
