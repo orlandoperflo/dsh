@@ -50,6 +50,7 @@ export function OperatorWorkspace() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingRepo, setIsGeneratingRepo] = useState(false);
   const [mode, setMode] = useState<string>("ready");
+  const [modeDetails, setModeDetails] = useState<string>("Vercel server runtime will check OPENAI_API_KEY when orchestration runs.");
 
   const readiness = useMemo(() => {
     const score = [client.name, client.industry, client.objective, operatorContext].filter(Boolean).length + Math.min(uploads.length, 3);
@@ -66,6 +67,7 @@ export function OperatorWorkspace() {
     setIsAnalyzing(true);
     setRepository(null);
     setMode("orchestrating");
+    setModeDetails("Checking the server-side Vercel environment for an OpenAI key...");
     const ticker = setInterval(() => setActiveState((state) => (state + 1) % orchestrationStates.length), 700);
     try {
       const response = await fetch("/api/analyze", {
@@ -76,6 +78,9 @@ export function OperatorWorkspace() {
       const payload = await response.json();
       setAnalysis(payload.result);
       setMode(payload.mode);
+      setModeDetails(payload.openai?.configured
+        ? `OpenAI key found in ${payload.openai.envVar}. ${payload.error ? `OpenAI error: ${payload.error}` : "Response received from server."}`
+        : `No OpenAI key found on the server. Checked: ${(payload.openai?.checkedEnvVars ?? ["OPENAI_API_KEY"]).join(", ")}.`);
       setActiveState(orchestrationStates.length - 1);
     } finally {
       clearInterval(ticker);
@@ -204,6 +209,7 @@ export function OperatorWorkspace() {
               </button>
             </div>
             <p className="mt-4 text-xs uppercase tracking-[0.22em] text-mist">Mode: {mode}</p>
+            <p className="mt-2 text-xs leading-5 text-mist">{modeDetails}</p>
           </Panel>
 
           <AnimatePresence>

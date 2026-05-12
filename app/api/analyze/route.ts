@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import type { AnalysisResult, ClientProfile, UploadedIntelligence } from "@/lib/operator-types";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type AnalyzeRequest = {
   client: ClientProfile;
@@ -130,18 +131,36 @@ function deterministicAnalysis({ client, uploads, operatorContext }: AnalyzeRequ
   };
 }
 
+const openAiEnvVars = ["OPENAI_API_KEY", "OPEN_AI_API_KEY"] as const;
+
+function getOpenAIApiKey() {
+  for (const name of openAiEnvVars) {
+    const value = process.env[name]?.trim();
+    if (value) return { name, value };
+  }
+
+  return null;
+}
+
 const systemPrompt = `You are Eternity Operator Workspace, an operational intelligence compiler. Return strict JSON matching this TypeScript shape: { client, summary, bottlenecks: string[], workflows: {name, trigger, steps: string[], automation, owner}[], agents: {name, role, goals: string[], permissions: string[], memory: string[], escalation}[], memoryDesign: string[], architecture: string[], executionChains: string[], deploymentTargets: string[] }. Generate real operational systems, not generic SaaS copy. Include repository and deployment implications.`;
 
 export async function POST(request: Request) {
   const payload = (await request.json()) as AnalyzeRequest;
   const fallback = deterministicAnalysis(payload);
 
-  if (!process.env.OPENAI_API_KEY) {
-    return NextResponse.json({ result: fallback, mode: "deterministic-fallback", states: orchestrationStates });
+  const apiKey = getOpenAIApiKey();
+
+  if (!apiKey) {
+    return NextResponse.json({
+      result: fallback,
+      mode: "deterministic-fallback",
+      states: orchestrationStates,
+      openai: { configured: false, checkedEnvVars: openAiEnvVars }
+    });
   }
 
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey: apiKey.value });
     const completion = await openai.chat.completions.create({
       model: "gpt-4.1-mini",
       messages: [
@@ -152,8 +171,32 @@ export async function POST(request: Request) {
     });
 
     const result = JSON.parse(completion.choices[0]?.message.content ?? "{}") as AnalysisResult;
-    return NextResponse.json({ result, mode: "openai", states: orchestrationStates });
+    return NextResponse.json({
+      result,
+      mode: "openai",
+      states: orchestrationStates,
+      openai: { configured: true, envVar: apiKey.name }
+    });
   } catch (error) {
-    return NextResponse.json({ result: fallback, mode: "fallback-after-openai-error", states: orchestrationStates, error: error instanceof Error ? error.message : "Unknown error" });
+    return NextResponse.json({
+      result: fallback,
+      mode: "fallback-after-openai-error",
+      states: orchestrationStates,
+      openai: { configured: true, envVar: apiKey.name },
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
   }
+}
+
+export async function GET() {
+  const apiKey = getOpenAIApiKey();
+
+  return NextResponse.json({
+    ok: true,
+    runtime: "nodejs",
+    vercelEnv: process.env.VERCEL_ENV ?? "local",
+    openai: apiKey
+      ? { configured: true, envVar: apiKey.name }
+      : { configured: false, checkedEnvVars: openAiEnvVars }
+  });
 }
