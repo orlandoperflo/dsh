@@ -1,10 +1,21 @@
-import type { AgentSpec, AnalysisResult, RepoFile, Workflow } from "./operator-types";
+import type {
+  AgentSpec,
+  AnalysisResult,
+  RepoFile,
+  Workflow
+} from "./operator-types";
 
-const slugify = (value: string) =>
-  value
+const slugify = (value?: string | null) => {
+  const safe =
+    typeof value === "string" && value.trim().length > 0
+      ? value
+      : "client-operating-system";
+
+  return safe
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "") || "client-operating-system";
+    .replace(/(^-|-$)+/g, "");
+};
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -20,15 +31,23 @@ const safeArray = (value: unknown): string[] => {
   return [];
 };
 
+const safeText = (value: unknown, fallback = ""): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  return fallback;
+};
+
 const agentPrompt = (agent: AgentSpec) => {
   const goals = safeArray(agent.goals);
   const permissions = safeArray(agent.permissions);
   const memory = safeArray(agent.memory);
 
-  return `# ${agent.name}
+  return `# ${safeText(agent.name, "Unnamed Agent")}
 
 ## Role
-${agent.role}
+${safeText(agent.role)}
 
 ## Goals
 ${goals.map((goal) => `- ${goal}`).join("\n")}
@@ -40,51 +59,75 @@ ${permissions.map((permission) => `- ${permission}`).join("\n")}
 ${memory.map((item) => `- ${item}`).join("\n")}
 
 ## Escalation
-${agent.escalation}
+${safeText(agent.escalation)}
 
 ## Operating Prompt
-You are ${agent.name}. Convert incoming company context into concrete operational actions. Ask for missing data only when execution risk is high. Maintain concise, auditable reasoning and produce next actions, owners, deadlines, and system updates.`;
+You are ${safeText(agent.name, "the agent")}. Convert incoming company context into concrete operational actions. Ask for missing data only when execution risk is high. Maintain concise, auditable reasoning and produce next actions, owners, deadlines, and system updates.`;
 };
 
 const workflowMarkdown = (workflow: Workflow) => {
   const steps = safeArray(workflow.steps);
 
-  return `# ${workflow.name}
+  return `# ${safeText(workflow.name, "Unnamed Workflow")}
 
-**Trigger:** ${workflow.trigger}
+**Trigger:** ${safeText(workflow.trigger)}
 
-**Owner:** ${workflow.owner}
+**Owner:** ${safeText(workflow.owner)}
 
 ## Execution Chain
 ${steps.map((step, index) => `${index + 1}. ${step}`).join("\n")}
 
 ## Automation Opportunity
-${workflow.automation}
+${safeText(workflow.automation)}
 `;
 };
 
 export function generateRepository(analysis: AnalysisResult) {
-  const repoName = `${slugify(analysis.client.name)}-operating-system`;
+  analysis.agents = Array.isArray(analysis.agents)
+    ? analysis.agents.map((agent) => ({
+        ...agent,
+        goals: safeArray(agent.goals),
+        permissions: safeArray(agent.permissions),
+        memory: safeArray(agent.memory)
+      }))
+    : [];
 
-  analysis.agents = analysis.agents.map((agent) => ({
-    ...agent,
-    goals: safeArray(agent.goals),
-    permissions: safeArray(agent.permissions),
-    memory: safeArray(agent.memory)
-  }));
-
-  analysis.workflows = analysis.workflows.map((workflow) => ({
-    ...workflow,
-    steps: safeArray(workflow.steps)
-  }));
+  analysis.workflows = Array.isArray(analysis.workflows)
+    ? analysis.workflows.map((workflow) => ({
+        ...workflow,
+        steps: safeArray(workflow.steps)
+      }))
+    : [];
 
   analysis.memoryDesign = safeArray(analysis.memoryDesign);
   analysis.executionChains = safeArray(analysis.executionChains);
   analysis.architecture = safeArray(analysis.architecture);
   analysis.deploymentTargets = safeArray(analysis.deploymentTargets);
 
+  const clientName = safeText(
+    analysis?.client?.name,
+    "Client"
+  );
+
+  const clientIndustry = safeText(
+    analysis?.client?.industry,
+    "Business"
+  );
+
+  const summary = safeText(
+    analysis.summary,
+    "Operational intelligence repository."
+  );
+
+  const repoName = `${slugify(
+    analysis?.client?.name
+  )}-operating-system`;
+
   const agentImports = analysis.agents
-    .map((agent) => `- ${agent.name}: ${agent.role}`)
+    .map(
+      (agent) =>
+        `- ${safeText(agent.name)}: ${safeText(agent.role)}`
+    )
     .join("\n");
 
   const packageJson = {
@@ -125,16 +168,16 @@ export function generateRepository(analysis: AnalysisResult) {
       path: ".env.example",
       language: "dotenv",
       content:
-        "OPENAI_API_KEY=\nNEXT_PUBLIC_CLIENT_NAME=\"" +
-        analysis.client.name +
-        "\"\n"
+        `OPENAI_API_KEY=
+NEXT_PUBLIC_CLIENT_NAME="${clientName}"
+`
     },
     {
       path: "README.md",
       language: "markdown",
-      content: `# ${analysis.client.name} Operating System
+      content: `# ${clientName} Operating System
 
-${analysis.summary}
+${summary}
 
 ## Run locally
 
@@ -158,13 +201,19 @@ ${agentImports}
       language: "markdown",
       content: `# Deployment Architecture
 
-${analysis.architecture.map((item) => `- ${item}`).join("\n")}
+${analysis.architecture
+  .map((item) => `- ${item}`)
+  .join("\n")}
 
 ## Memory design
-${analysis.memoryDesign.map((item) => `- ${item}`).join("\n")}
+${analysis.memoryDesign
+  .map((item) => `- ${item}`)
+  .join("\n")}
 
 ## Execution chains
-${analysis.executionChains.map((item) => `- ${item}`).join("\n")}
+${analysis.executionChains
+  .map((item) => `- ${item}`)
+  .join("\n")}
 `
     },
     {
@@ -174,17 +223,54 @@ ${analysis.executionChains.map((item) => `- ${item}`).join("\n")}
 
 export default function Page() {
   return (
-    <main style={{ minHeight: "100vh", background: "#07080c", color: "#f7f3ea", padding: 48, fontFamily: "Inter, system-ui" }}>
-      <p style={{ color: "#d8b56d", letterSpacing: 3, textTransform: "uppercase" }}>${analysis.client.industry} Operating System</p>
-      <h1 style={{ fontSize: 56, maxWidth: 920, lineHeight: 1 }}>
-        ${analysis.client.name} AI Operations Command Center
-      </h1>
-
-      <p style={{ color: "#aab2c0", maxWidth: 760, fontSize: 18 }}>
-        ${analysis.summary.replace(/`/g, "'")}
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#07080c",
+        color: "#f7f3ea",
+        padding: 48,
+        fontFamily: "Inter, system-ui"
+      }}
+    >
+      <p
+        style={{
+          color: "#d8b56d",
+          letterSpacing: 3,
+          textTransform: "uppercase"
+        }}
+      >
+        ${clientIndustry} Operating System
       </p>
 
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20, marginTop: 40 }}>
+      <h1
+        style={{
+          fontSize: 56,
+          maxWidth: 920,
+          lineHeight: 1
+        }}
+      >
+        ${clientName} AI Operations Command Center
+      </h1>
+
+      <p
+        style={{
+          color: "#aab2c0",
+          maxWidth: 760,
+          fontSize: 18
+        }}
+      >
+        ${summary.replace(/`/g, "'")}
+      </p>
+
+      <section
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: 20,
+          marginTop: 40
+        }}
+      >
         {agents.map((agent) => (
           <article
             key={agent.name}
@@ -196,7 +282,10 @@ export default function Page() {
             }}
           >
             <h2>{agent.name}</h2>
-            <p style={{ color: "#aab2c0" }}>{agent.role}</p>
+
+            <p style={{ color: "#aab2c0" }}>
+              {agent.role}
+            </p>
           </article>
         ))}
       </section>
@@ -240,14 +329,12 @@ export async function POST(request: Request) {
   const body = await request.json();
 
   const openai = process.env.OPENAI_API_KEY
-    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    ? new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY
+      })
     : null;
 
-  const system = \`You are the ${analysis.client.name} orchestration layer. Available agents: ${analysis.agents
-        .map((agent) => agent.name)
-        .join(", ")}. Available workflows: ${analysis.workflows
-        .map((workflow) => workflow.name)
-        .join(", ")}. Return JSON with selectedAgent, workflow, nextActions, escalationRisk.\`;
+  const system = \`You are the ${clientName} orchestration layer.\`;
 
   if (!openai) {
     return NextResponse.json({
@@ -259,17 +346,28 @@ export async function POST(request: Request) {
     });
   }
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: JSON.stringify(body) }
-    ],
-    response_format: { type: "json_object" }
-  });
+  const completion =
+    await openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "system",
+          content: system
+        },
+        {
+          role: "user",
+          content: JSON.stringify(body)
+        }
+      ],
+      response_format: {
+        type: "json_object"
+      }
+    });
 
   return NextResponse.json(
-    JSON.parse(completion.choices[0]?.message.content ?? "{}")
+    JSON.parse(
+      completion.choices[0]?.message.content ?? "{}"
+    )
   );
 }
 `
@@ -277,11 +375,17 @@ export async function POST(request: Request) {
     {
       path: "lib/operating-system.ts",
       language: "ts",
-      content: `export const agents = ${json(analysis.agents)} as const;
+      content: `export const agents = ${json(
+        analysis.agents
+      )} as const;
 
-export const workflows = ${json(analysis.workflows)} as const;
+export const workflows = ${json(
+        analysis.workflows
+      )} as const;
 
-export const memoryDesign = ${json(analysis.memoryDesign)} as const;
+export const memoryDesign = ${json(
+        analysis.memoryDesign
+      )} as const;
 `
     },
     {
@@ -299,13 +403,15 @@ export const memoryDesign = ${json(analysis.memoryDesign)} as const;
 
   analysis.agents.forEach((agent) => {
     files.push({
-      path: `agents/${slugify(agent.name)}.md`,
+      path: `agents/${slugify(agent?.name)}.md`,
       language: "markdown",
       content: agentPrompt(agent)
     });
 
     files.push({
-      path: `prompts/${slugify(agent.name)}.prompt.md`,
+      path: `prompts/${slugify(
+        agent?.name
+      )}.prompt.md`,
       language: "markdown",
       content: agentPrompt(agent)
     });
@@ -313,7 +419,9 @@ export const memoryDesign = ${json(analysis.memoryDesign)} as const;
 
   analysis.workflows.forEach((workflow) => {
     files.push({
-      path: `workflows/${slugify(workflow.name)}.md`,
+      path: `workflows/${slugify(
+        workflow?.name
+      )}.md`,
       language: "markdown",
       content: workflowMarkdown(workflow)
     });
@@ -335,15 +443,22 @@ export const memoryDesign = ${json(analysis.memoryDesign)} as const;
     content: json({
       targets: analysis.deploymentTargets,
       requiredSecrets: ["OPENAI_API_KEY"],
-      optionalIntegrations: ["slack", "hubspot", "linear", "notion"]
+      optionalIntegrations: [
+        "slack",
+        "hubspot",
+        "linear",
+        "notion"
+      ]
     })
   });
 
   return {
     name: repoName,
-    description: `Deployable operational intelligence repository for ${analysis.client.name}.`,
+    description: `Deployable operational intelligence repository for ${clientName}.`,
     files,
-    tree: files.map((file) => file.path).sort(),
+    tree: files
+      .map((file) => file.path)
+      .sort(),
     installCommand: "npm install",
     devCommand: "npm run dev",
     deploymentNotes: [
