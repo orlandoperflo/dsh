@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowRight, Boxes, BrainCircuit, CheckCircle2, ClipboardList, CloudUpload, Code2, FileArchive, GitBranch, LayoutDashboard, Loader2, Network, Rocket, ShieldCheck, Sparkles, TerminalSquare } from "lucide-react";
+import { ArrowRight, Boxes, BrainCircuit, CheckCircle2, ClipboardList, CloudUpload, Code2, Download, FileArchive, GitBranch, LayoutDashboard, Loader2, Network, Rocket, ShieldCheck, Sparkles, TerminalSquare } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { AnalysisResult, ClientProfile, GeneratedRepository, UploadedIntelligence } from "@/lib/operator-types";
 
@@ -38,6 +38,124 @@ async function readFile(file: File): Promise<UploadedIntelligence> {
 function copyRepository(repository: GeneratedRepository) {
   const payload = repository.files.map((file) => `--- ${file.path} ---\n${file.content}`).join("\n\n");
   return navigator.clipboard.writeText(payload);
+}
+
+function sanitizeZipPath(path: string) {
+  return path
+    .replace(/^\/+/, "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter((segment) => segment && segment !== "." && segment !== "..")
+    .join("/");
+}
+
+function sanitizeFileName(name: string) {
+  return (name || "generated-repository")
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "generated-repository";
+}
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function uint16(value: number) {
+  return [value & 0xff, (value >>> 8) & 0xff];
+}
+
+function uint32(value: number) {
+  return [value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff];
+}
+
+function createRepositoryZip(repository: GeneratedRepository) {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const centralDirectory: Uint8Array[] = [];
+  let offset = 0;
+  let entryCount = 0;
+
+  for (const file of repository.files) {
+    const path = sanitizeZipPath(file.path);
+    if (!path) continue;
+
+    const name = encoder.encode(path);
+    const content = encoder.encode(file.content);
+    const checksum = crc32(content);
+    const localHeader = new Uint8Array([
+      ...uint32(0x04034b50),
+      ...uint16(20),
+      ...uint16(0x0800),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint32(checksum),
+      ...uint32(content.length),
+      ...uint32(content.length),
+      ...uint16(name.length),
+      ...uint16(0)
+    ]);
+
+    chunks.push(localHeader, name, content);
+
+    centralDirectory.push(new Uint8Array([
+      ...uint32(0x02014b50),
+      ...uint16(20),
+      ...uint16(20),
+      ...uint16(0x0800),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint32(checksum),
+      ...uint32(content.length),
+      ...uint32(content.length),
+      ...uint16(name.length),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint16(0),
+      ...uint32(0),
+      ...uint32(offset)
+    ]), name);
+
+    offset += localHeader.length + name.length + content.length;
+    entryCount += 1;
+  }
+
+  const centralDirectorySize = centralDirectory.reduce((size, chunk) => size + chunk.length, 0);
+  const endOfCentralDirectory = new Uint8Array([
+    ...uint32(0x06054b50),
+    ...uint16(0),
+    ...uint16(0),
+    ...uint16(entryCount),
+    ...uint16(entryCount),
+    ...uint32(centralDirectorySize),
+    ...uint32(offset),
+    ...uint16(0)
+  ]);
+
+  return new Blob([...chunks, ...centralDirectory, endOfCentralDirectory], { type: "application/zip" });
+}
+
+function downloadRepositoryZip(repository: GeneratedRepository) {
+  const blob = createRepositoryZip(repository);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${sanitizeFileName(repository.name)}.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function OperatorWorkspace() {
@@ -77,7 +195,17 @@ export function OperatorWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client, uploads, operatorContext })
       });
+
+      if (!response.ok) {
+        throw new Error(`Analysis request failed with ${response.status}`);
+      }
+
       const payload = await response.json();
+
+      if (!payload.result) {
+        throw new Error("Analysis route did not return a result.");
+      }
+
       setAnalysis(payload.result);
       setMode(payload.mode);
       setGenerationStatus(payload.mode === "openai" ? "success" : "fallback");
@@ -87,6 +215,12 @@ export function OperatorWorkspace() {
           ? `OpenAI key found in ${payload.openai.envVar}, but no live generation was received. Showing deterministic fallback. Error: ${payload.error ?? "Unknown OpenAI error"}`
           : `No OpenAI key found on the server. Showing deterministic fallback. Checked: ${(payload.openai?.checkedEnvVars ?? ["OPENAI_API_KEY"]).join(", ")}.`);
       setActiveState(orchestrationStates.length - 1);
+      return payload.result as AnalysisResult;
+    } catch (error) {
+      setMode("analysis-error");
+      setGenerationStatus("fallback");
+      setModeDetails(error instanceof Error ? error.message : "Analysis failed before repository generation could run.");
+      return null;
     } finally {
       clearInterval(ticker);
       setIsAnalyzing(false);
@@ -94,16 +228,35 @@ export function OperatorWorkspace() {
   }
 
   async function generateRepo() {
-    if (!analysis) return;
     setIsGeneratingRepo(true);
+    setRepository(null);
     try {
+      const analysisForRepository = analysis ?? await runAnalysis();
+
+      if (!analysisForRepository) {
+        throw new Error("Run orchestration before generating the repository.");
+      }
+
       const response = await fetch("/api/generate-repository", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(analysis)
+        body: JSON.stringify(analysisForRepository)
       });
+
+      if (!response.ok) {
+        throw new Error(`Repository request failed with ${response.status}`);
+      }
+
       const payload = await response.json();
+
+      if (!payload.repository) {
+        throw new Error("Repository route did not return a repository.");
+      }
+
       setRepository(payload.repository);
+    } catch (error) {
+      setMode("repository-error");
+      setModeDetails(error instanceof Error ? error.message : "Repository generation failed.");
     } finally {
       setIsGeneratingRepo(false);
     }
@@ -254,8 +407,8 @@ export function OperatorWorkspace() {
               <h3 className="text-2xl font-semibold tracking-tight">Production-ready client repository output</h3>
               <p className="mt-2 text-mist">Generate a copyable file tree that includes Next.js starter code, an orchestration API route, agent prompts, workflow markdown, memory schema, integration registry, and Vercel deployment notes.</p>
             </div>
-            <button onClick={generateRepo} disabled={!analysis || isGeneratingRepo} className="inline-flex items-center justify-center gap-2 rounded-full bg-platinum px-6 py-3 font-semibold text-night transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
-              {isGeneratingRepo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} Generate repository
+            <button onClick={generateRepo} disabled={isAnalyzing || isGeneratingRepo} className="inline-flex items-center justify-center gap-2 rounded-full bg-platinum px-6 py-3 font-semibold text-night transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
+              {isGeneratingRepo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />} {analysis ? "Generate repository" : "Run orchestration + generate"}
             </button>
           </div>
 
@@ -267,9 +420,14 @@ export function OperatorWorkspace() {
                 <div className="mt-6 space-y-2 font-mono text-sm text-mist">
                   {repository.tree.map((file) => <p key={file}>/{file}</p>)}
                 </div>
-                <button onClick={() => copyRepository(repository)} className="mt-6 inline-flex items-center gap-2 rounded-full border border-white/10 px-5 py-3 text-sm font-semibold transition hover:border-ember/50">
-                  <ClipboardList className="h-4 w-4" /> Copy all files
-                </button>
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                  <button onClick={() => copyRepository(repository)} className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 px-5 py-3 text-sm font-semibold transition hover:border-ember/50">
+                    <ClipboardList className="h-4 w-4" /> Copy all files
+                  </button>
+                  <button onClick={() => downloadRepositoryZip(repository)} className="inline-flex items-center justify-center gap-2 rounded-full bg-ember px-5 py-3 text-sm font-semibold text-night transition hover:bg-[#f1cc82]">
+                    <Download className="h-4 w-4" /> Download ZIP
+                  </button>
+                </div>
               </div>
               <div className="max-h-[680px] overflow-auto rounded-3xl border border-white/10 bg-[#050608] p-5">
                 {repository.files.map((file) => (
@@ -282,7 +440,7 @@ export function OperatorWorkspace() {
             </div>
           ) : (
             <div className="mt-8 rounded-3xl border border-dashed border-white/15 bg-white/[0.03] p-8 text-center text-mist">
-              Run orchestration first, then generate the deployable repository.
+              Click “Run orchestration + generate” to create the deployable repository in one pass, or run orchestration first to preview the intelligence dashboard.
             </div>
           )}
         </Panel>
