@@ -50,6 +50,8 @@ export function OperatorWorkspace() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGeneratingRepo, setIsGeneratingRepo] = useState(false);
   const [mode, setMode] = useState<string>("ready");
+  const [modeDetails, setModeDetails] = useState<string>("Vercel server runtime will check OPENAI_API_KEY when orchestration runs.");
+  const [generationStatus, setGenerationStatus] = useState<"idle" | "pending" | "success" | "fallback">("idle");
 
   const readiness = useMemo(() => {
     const score = [client.name, client.industry, client.objective, operatorContext].filter(Boolean).length + Math.min(uploads.length, 3);
@@ -66,6 +68,8 @@ export function OperatorWorkspace() {
     setIsAnalyzing(true);
     setRepository(null);
     setMode("orchestrating");
+    setGenerationStatus("pending");
+    setModeDetails("Checking the server-side Vercel environment for an OpenAI key...");
     const ticker = setInterval(() => setActiveState((state) => (state + 1) % orchestrationStates.length), 700);
     try {
       const response = await fetch("/api/analyze", {
@@ -76,6 +80,12 @@ export function OperatorWorkspace() {
       const payload = await response.json();
       setAnalysis(payload.result);
       setMode(payload.mode);
+      setGenerationStatus(payload.mode === "openai" ? "success" : "fallback");
+      setModeDetails(payload.mode === "openai"
+        ? `${payload.successMessage ?? "✅ OpenAI generation received successfully."} Model: ${payload.openai?.model ?? "unknown"}. Completion: ${payload.openai?.completionId ?? "received"}.`
+        : payload.openai?.configured
+          ? `OpenAI key found in ${payload.openai.envVar}, but no live generation was received. Showing deterministic fallback. Error: ${payload.error ?? "Unknown OpenAI error"}`
+          : `No OpenAI key found on the server. Showing deterministic fallback. Checked: ${(payload.openai?.checkedEnvVars ?? ["OPENAI_API_KEY"]).join(", ")}.`);
       setActiveState(orchestrationStates.length - 1);
     } finally {
       clearInterval(ticker);
@@ -203,13 +213,21 @@ export function OperatorWorkspace() {
                 {isAnalyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Network className="h-4 w-4" />} Run orchestration
               </button>
             </div>
-            <p className="mt-4 text-xs uppercase tracking-[0.22em] text-mist">Mode: {mode}</p>
+            <div className={`mt-5 rounded-2xl border p-4 ${generationStatus === "success" ? "border-signal/40 bg-signal/10" : generationStatus === "fallback" ? "border-ember/40 bg-ember/10" : "border-white/10 bg-white/[0.03]"}`}>
+              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-platinum">
+                {generationStatus === "success" ? <CheckCircle2 className="h-4 w-4 text-signal" /> : <ShieldCheck className="h-4 w-4 text-ember" />} Mode: {mode}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-mist">{modeDetails}</p>
+            </div>
           </Panel>
 
           <AnimatePresence>
             {analysis && (
               <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}>
                 <Panel icon={<Boxes className="h-5 w-5" />} title="Intelligence dashboard" subtitle="Bottlenecks, workflows, agent ecosystem, operational maps, and execution chains.">
+                  <div className={`mb-5 rounded-2xl border px-4 py-3 text-sm ${generationStatus === "success" ? "border-signal/40 bg-signal/10 text-platinum" : "border-ember/40 bg-ember/10 text-mist"}`}>
+                    {generationStatus === "success" ? "✅ Live OpenAI generation received. The dashboard below is model-generated from the submitted context." : "Fallback template shown. OpenAI did not return a live generation for this run."}
+                  </div>
                   <div className="grid gap-4 md:grid-cols-2">
                     <Metric label="Agents" value={analysis.agents.length} />
                     <Metric label="Workflows" value={analysis.workflows.length} />
